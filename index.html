@@ -1119,7 +1119,113 @@
             }
         });
 
-        // Function to automatically load Excel file from the folder
+        // Function to load Excel file from Google Drive
+        async function loadExcelFromGoogleDrive() {
+            try {
+                // Google Drive file ID for your Excel file
+                const googleDriveUrl = 'https://drive.google.com/uc?export=download&id=1YC-DbhEPXgTcmC_0O2zp4LWs5ObsNeZ8';
+                
+                console.log('Loading Excel from Google Drive...');
+                
+                // Add loading indicator
+                const loadingElement = document.createElement('div');
+                loadingElement.innerHTML = '📊 Loading data from Google Drive...';
+                loadingElement.className = 'text-center text-blue-600 font-semibold py-4 bg-blue-50 rounded-lg border border-blue-200';
+                loadingElement.id = 'loading-indicator';
+                const container = document.querySelector('#seat-grid') || document.querySelector('#app');
+                if (container) {
+                    container.appendChild(loadingElement);
+                }
+                
+                const response = await fetch(googleDriveUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                // Remove loading indicator
+                const loadingIndicator = document.getElementById('loading-indicator');
+                if (loadingIndicator && loadingIndicator.parentNode) {
+                    loadingIndicator.parentNode.removeChild(loadingIndicator);
+                }
+                
+                // Get first worksheet
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                
+                // Convert to JSON
+                const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                
+                // Process the data
+                const seatData = {};
+                const seenIds = new Set();
+                let processedCount = 0;
+                
+                jsonData.forEach((row, index) => {
+                    const seat_id = row['Seat ID'] || row['seat_id'] || row['SeatID'] || row['ID'] || row['Seat_ID'];
+                    const name = row['Student Name'] || row['Name'] || row['name'] || row['Student_Name'];
+                    const department = row['Department'] || row['department'] || row['Dept'] || row['DEPT'];
+                    const session = row['Session'] || row['session'] || row['Year'] || row['Academic_Year'];
+                    const room_no = row['Room No'] || row['room_no'] || row['Room'] || row['RoomNo'] || row['Room_No'];
+                    const building = row['Building'] || row['building'] || row['Block'] || row['Building_Name'];
+                    const status = row['Status'] || row['status'] || row['State'] || row['Condition'];
+                    let floor_no = row['Floor No'] || row['floor_no'] || row['Floor'] || row['Floor_No'];
+                    const floor_teacher = row['Floor Teacher'] || row['floor_teacher'] || row['Teacher'] || row['Floor_Teacher'];
+                    
+                    // If floor_no is not provided or is N/A, infer it from room number
+                    if (!floor_no || floor_no === 'N/A') {
+                        floor_no = inferFloorFromRoom(room_no);
+                    }
+                    
+                    if (!seat_id || seenIds.has(seat_id)) {
+                        return;
+                    }
+                    
+                    seenIds.add(seat_id);
+                    const is_expired = status && status.toString().toLowerCase().includes('expired');
+                    
+                    seatData[seat_id] = {
+                        seat_id: seat_id.toString(),
+                        name: name || 'N/A',
+                        department: department || 'N/A',
+                        session: session || 'N/A',
+                        room_no: room_no || 'N/A',
+                        building: building || 'N/A',
+                        floor_no: floor_no || 'N/A',
+                        floor_teacher: floor_teacher || 'N/A',
+                        is_expired: is_expired
+                    };
+                    processedCount++;
+                });
+                
+                if (processedCount > 0) {
+                    console.log(`Successfully loaded ${processedCount} seats from Google Drive`);
+                    saveSeatData(seatData);
+                    
+                    // Add timestamp of last update
+                    localStorage.setItem('lastDataUpdate', new Date().toISOString());
+                    
+                    return seatData;
+                }
+                
+            } catch (error) {
+                console.error('Google Drive load failed:', error);
+                
+                // Remove loading indicator on error
+                const loadingIndicator = document.getElementById('loading-indicator');
+                if (loadingIndicator && loadingIndicator.parentNode) {
+                    loadingIndicator.parentNode.removeChild(loadingIndicator);
+                }
+                
+                throw error;
+            }
+        }
+        
+        // Function to automatically load Excel file from the folder (fallback)
         async function loadExcelFromFolder() {
             try {
                 const response = await fetch('./Hall_Seat_Allocation_2025.xlsx');
@@ -1183,8 +1289,7 @@
                 
                 if (processedCount > 0) {
                     saveSeatData(seatData);
-                    renderSeatGrid(seatData);
-                    return true;
+                    return seatData;
                 }
                 
             } catch (error) {
@@ -1193,23 +1298,94 @@
             return false;
         }
 
-        // Initialize app
-        async function initializeApp() {
-            // First try to load from existing localStorage
-            let initialData = loadSeatData();
+        // Add enhanced refresh functionality
+        function addRefreshButton() {
+            const header = document.querySelector('header');
             
-            // If no data in localStorage, try to auto-load from Excel file
-            if (Object.keys(initialData).length === 0) {
-                const loaded = await loadExcelFromFolder();
-                if (!loaded) {
-                    renderSeatGrid({});
-                    return;
-                }
-                return;
+            // Create button container
+            const buttonContainer = document.createElement('div');
+            buttonContainer.className = 'flex flex-wrap gap-2 mt-4 justify-center items-center';
+            
+            // Refresh button
+            const refreshButton = document.createElement('button');
+            refreshButton.innerHTML = '🔄 Refresh Data';
+            refreshButton.className = 'bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors duration-200 font-medium shadow-sm';
+            refreshButton.id = 'refresh-data-btn';
+            
+            // Last updated info
+            const lastUpdated = localStorage.getItem('lastDataUpdate');
+            const updateInfo = document.createElement('span');
+            updateInfo.className = 'text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-lg';
+            updateInfo.id = 'update-info';
+            if (lastUpdated) {
+                const date = new Date(lastUpdated);
+                updateInfo.innerHTML = `📅 Last updated: ${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+            } else {
+                updateInfo.innerHTML = '📅 Not loaded from Google Drive yet';
             }
             
-            // Render existing data from localStorage
-            renderSeatGrid(initialData);
+            refreshButton.onclick = async () => {
+                refreshButton.innerHTML = '🔄 Loading...';
+                refreshButton.disabled = true;
+                
+                try {
+                    const data = await loadExcelFromGoogleDrive();
+                    renderSeatGrid(data);
+                    refreshButton.innerHTML = '✅ Updated!';
+                    
+                    // Update last updated info
+                    const newDate = new Date();
+                    updateInfo.innerHTML = `📅 Last updated: ${newDate.toLocaleDateString()} ${newDate.toLocaleTimeString()}`;
+                    
+                    setTimeout(() => {
+                        refreshButton.innerHTML = '🔄 Refresh Data';
+                        refreshButton.disabled = false;
+                    }, 2000);
+                } catch (error) {
+                    refreshButton.innerHTML = '❌ Failed';
+                    console.error('Refresh failed:', error);
+                    setTimeout(() => {
+                        refreshButton.innerHTML = '🔄 Refresh Data';
+                        refreshButton.disabled = false;
+                    }, 3000);
+                }
+            };
+            
+            buttonContainer.appendChild(refreshButton);
+            buttonContainer.appendChild(updateInfo);
+            header.appendChild(buttonContainer);
+        }
+
+        // Initialize app
+        async function initializeApp() {
+            // Add refresh button
+            addRefreshButton();
+            
+            // Try to load from Google Drive first
+            try {
+                console.log('Attempting to load from Google Drive...');
+                const data = await loadExcelFromGoogleDrive();
+                renderSeatGrid(data);
+            } catch (error) {
+                console.log('Google Drive failed, trying localStorage...', error);
+                
+                // If Google Drive fails, try localStorage
+                const localData = loadSeatData();
+                if (Object.keys(localData).length > 0) {
+                    console.log('Loading from localStorage');
+                    renderSeatGrid(localData);
+                } else {
+                    console.log('Trying local Excel file...');
+                    // If localStorage is empty, try local file
+                    const localFileData = await loadExcelFromFolder();
+                    if (localFileData) {
+                        renderSeatGrid(localFileData);
+                    } else {
+                        // Show empty state with instruction
+                        renderSeatGrid({});
+                    }
+                }
+            }
         }
 
         // Start the application
