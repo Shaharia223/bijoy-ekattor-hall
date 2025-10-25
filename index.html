@@ -1119,17 +1119,19 @@
             }
         });
 
-        // Function to load Excel file from Google Drive
+        // Function to load Excel file from Google Drive/Sheets
         async function loadExcelFromGoogleDrive() {
             try {
-                // Google Drive file ID for your Excel file
-                const googleDriveUrl = 'https://drive.google.com/uc?export=download&id=1YC-DbhEPXgTcmC_0O2zp4LWs5ObsNeZ8';
+                // Google Sheets file ID - convert to Excel export URL
+                const fileId = '1YC-DbhEPXgTcmC_0O2zp4LWs5ObsNeZ8';
+                // Use Google Sheets export to Excel format
+                const googleSheetsUrl = `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`;
                 
-                console.log('Loading Excel from Google Drive...');
+                console.log('Loading Excel from Google Sheets...');
                 
                 // Add loading indicator
                 const loadingElement = document.createElement('div');
-                loadingElement.innerHTML = '📊 Loading data from Google Drive...';
+                loadingElement.innerHTML = '📊 Loading data from Google Sheets...';
                 loadingElement.className = 'text-center text-blue-600 font-semibold py-4 bg-blue-50 rounded-lg border border-blue-200';
                 loadingElement.id = 'loading-indicator';
                 const container = document.querySelector('#seat-grid') || document.querySelector('#app');
@@ -1137,10 +1139,10 @@
                     container.appendChild(loadingElement);
                 }
                 
-                const response = await fetch(googleDriveUrl);
+                const response = await fetch(googleSheetsUrl);
                 
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    throw new Error(`HTTP error! status: ${response.status} - Make sure Google Sheets is publicly accessible`);
                 }
                 
                 const arrayBuffer = await response.arrayBuffer();
@@ -1203,22 +1205,45 @@
                 });
                 
                 if (processedCount > 0) {
-                    console.log(`Successfully loaded ${processedCount} seats from Google Drive`);
+                    console.log(`Successfully loaded ${processedCount} seats from Google Sheets`);
                     saveSeatData(seatData);
                     
                     // Add timestamp of last update
                     localStorage.setItem('lastDataUpdate', new Date().toISOString());
                     
                     return seatData;
+                } else {
+                    throw new Error('No valid data found in the spreadsheet');
                 }
                 
             } catch (error) {
-                console.error('Google Drive load failed:', error);
+                console.error('Google Sheets load failed:', error);
                 
                 // Remove loading indicator on error
                 const loadingIndicator = document.getElementById('loading-indicator');
                 if (loadingIndicator && loadingIndicator.parentNode) {
                     loadingIndicator.parentNode.removeChild(loadingIndicator);
+                }
+                
+                // Show user-friendly error message
+                const container = document.querySelector('#seat-grid') || document.querySelector('#app');
+                if (container) {
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'text-center text-red-600 font-semibold py-4 bg-red-50 rounded-lg border border-red-200 mb-4';
+                    errorDiv.innerHTML = `
+                        <div class="text-4xl mb-2">⚠️</div>
+                        <h3 class="text-lg font-bold mb-2">Failed to Load Data</h3>
+                        <p class="text-sm mb-2">Error: ${error.message}</p>
+                        <p class="text-xs text-gray-600">Check that your Google Sheets is publicly accessible</p>
+                    `;
+                    container.appendChild(errorDiv);
+                    
+                    // Auto-remove error message after 10 seconds
+                    setTimeout(() => {
+                        if (errorDiv.parentNode) {
+                            errorDiv.parentNode.removeChild(errorDiv);
+                        }
+                    }, 10000);
                 }
                 
                 throw error;
@@ -1344,10 +1369,21 @@
                 } catch (error) {
                     refreshButton.innerHTML = '❌ Failed';
                     console.error('Refresh failed:', error);
+                    
+                    // Show detailed error to user
+                    const updateInfo = document.getElementById('update-info');
+                    if (updateInfo) {
+                        updateInfo.innerHTML = `❌ Failed: ${error.message}`;
+                        updateInfo.className = 'text-sm text-red-600 px-3 py-2 bg-red-100 rounded-lg';
+                    }
+                    
                     setTimeout(() => {
                         refreshButton.innerHTML = '🔄 Refresh Data';
                         refreshButton.disabled = false;
-                    }, 3000);
+                        if (updateInfo) {
+                            updateInfo.className = 'text-sm text-gray-600 px-3 py-2 bg-gray-100 rounded-lg';
+                        }
+                    }, 5000);
                 }
             };
             
@@ -1363,11 +1399,11 @@
             
             // Try to load from Google Drive first
             try {
-                console.log('Attempting to load from Google Drive...');
+                console.log('Attempting to load from Google Sheets...');
                 const data = await loadExcelFromGoogleDrive();
                 renderSeatGrid(data);
             } catch (error) {
-                console.log('Google Drive failed, trying localStorage...', error);
+                console.log('Google Sheets failed, trying localStorage...', error);
                 
                 // If Google Drive fails, try localStorage
                 const localData = loadSeatData();
